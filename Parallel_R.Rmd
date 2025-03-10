@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduction
-This document explores parallel computing in R using the `parallel`, `foreach`, and `doParallel` packages. We will benchmark different approaches and evaluate when parallelization is beneficial.
+This document is a compilation of resources found online on parallel computing in R using the `parallel`, `foreach`, and `doParallel` packages. We will benchmark different approaches and evaluate when parallelization is beneficial.
 
 # Detect Number of Cores
 ```{r, message=FALSE, warning=FALSE}
