@@ -1,0 +1,119 @@
+---
+title: "Parallelization in R"
+author: "Shirang Pund"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+This document explores parallel computing in R using the `parallel`, `foreach`, and `doParallel` packages. We will benchmark different approaches and evaluate when parallelization is beneficial.
+
+# Detect Number of Cores
+```{r, message=FALSE, warning=FALSE}
+library(parallel)
+detectCores()
+```
+
+# Sequential Execution
+```{r}
+n <- 1:1000000
+start <- Sys.time()
+sq_rt <- lapply(n, sqrt)
+end <- Sys.time()
+end - start
+```
+
+# Parallel Execution using parLapply()
+Parallelization is not always faster because `parLapply()` uses a socket approach. The socket approach launches a new version of R on each core. Technically, this connection is done via networking (e.g., the same as if you connected to a remote server), but the connection is happening all on your own computer. Each worker gets a full copy of the global environment, duplicating memory usage. So the entire process of first splitting the data, then copying and assigning the environment to different workers, may result in longer compute time than `lapply()`. Therefore, only parallelize when the task is fairly complicated.  
+An alternate approach uses forking (only available on POSIX systems such as Mac, Linux, Unix, and BSD, but not Windows). The forking approach copies the entire current version of R and moves it to a new core. The advantage is that because it copies the existing version of R, your entire workspace exists in each process, and cores share memory.
+```{r}
+my_cluster <- makeCluster(11)
+start <- Sys.time()
+sq_rt <- parLapply(my_cluster, n, sqrt)
+end <- Sys.time()
+stopCluster(my_cluster)
+end - start
+```
+
+# Using clusterExport()
+`clusterExport()` is used in parallel computing to send variables from the main R session (master process) to the worker processes in a PSOCK cluster (used in Windows and some Linux/macOS cases). When you create a PSOCK cluster (`makeCluster()` with `type = "PSOCK"`), the worker processes start fresh and do not inherit variables from the main R environment. Thus, any global variables or functions must be explicitly shared with workers using `clusterExport()`.
+```{r}
+cl <- makeCluster(2, type = "PSOCK")
+my_var <- 10
+worker_function <- function(x) return(x + my_var)
+
+# This will throw an error
+tryCatch(
+  parLapply(cl, 1:5, worker_function),
+  error = function(e) print(e)
+)
+
+clusterExport(cl, "my_var")
+parLapply(cl, 1:5, worker_function)  # Now it works!
+stopCluster(cl)
+```
+
+# Profiling Performance
+How do we know if parallelization is worth the effort? By profiling the initial code.
+```{r,message=FALSE, warning=FALSE}
+library(profvis)
+times <- 4e5
+cols <- 150
+data <- as.data.frame(x = matrix(rnorm(times * cols, mean = 5), ncol = cols))
+data <- cbind(id = paste0("g", seq_len(times)), data)
+
+profvis({
+  data1 <- data
+  means <- apply(data1[, names(data1) != "id"], 2, mean)
+  for (i in seq_along(means)) {
+    data1[, names(data1) != "id"][, i] <- data1[, names(data1) != "id"][, i] - means[i]
+  }
+})
+```
+
+# Benchmarking Different Approaches
+```{r,message=FALSE, warning=FALSE}
+library(microbenchmark)
+microbenchmark(
+  'Vectorized' = sqrt(n),
+  'Sequential' = lapply(n, sqrt),
+  'Parallel' = {
+    cl <- makeCluster(11)
+    parLapply(cl, n, sqrt)
+    stopCluster(cl)
+  },
+  times = 10
+)
+```
+
+# Using foreach for Parallel Loops
+The `foreach()` function is similar to `lapply()`.
+```{r,message=FALSE, warning=FALSE}
+library(foreach)
+library(doParallel)
+
+# `lapply()` example (returns a list)
+lapply(c(1:3), sqrt)
+
+# Equivalent `foreach()` example (returns a list)
+foreach(i = 1:3) %do% sqrt(i)
+
+# Using `.combine='c'` returns a vector instead of a list
+foreach(i = 1:3, .combine='c') %do% sqrt(i)
+```
+
+# Parallelizing foreach() with %dopar%
+We can parallelize `foreach()` using `%dopar%`.
+```{r}
+cl <- makeCluster(10)
+registerDoParallel(cl)
+foreach(i=1:3, .combine='c') %dopar% sqrt(i)
+stopCluster(cl)
+```
+
+# Do `parLapply()` and `foreach()` in conjunction with `doParallel` work in similar fashion in terms of efficiency?
+Both approaches utilize multiple cores to execute tasks in parallel. However, their efficiency depends on the specific use case. `parLapply()` is well-suited for large, independent computations where splitting data among workers is efficient. On the other hand, `foreach()` with `%dopar%` is more flexible and can handle complex workflows, including parallel loops that require dynamic task allocation.
